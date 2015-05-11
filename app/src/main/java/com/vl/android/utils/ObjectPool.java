@@ -2,53 +2,45 @@ package com.vl.android.utils;
 
 import android.util.SparseArray;
 
-public class ObjectPool<T> {
+/**
+ * Object Pool is thread-safe pattern to simplify access and reuse common objects. Particular object
+ * pool supports creation of object by using factory pattern as well as multiple type of object sets
+ */
+public class ObjectPool {
 
     static final int POOL_INITIAL_CAPACITY = 4;
     static final int DEFAULT_TYPE = 0;
 
     final SparseArray<Object[]> mPool;
     SlowObjectMap mInuse;
-    Factory<T> mFactory;
+    Factory mFactory;
 
+    /**
+     * Create empty thread-safe object pool. Override {@link #create(int)} to create new objects
+     */
     public ObjectPool() {
         this(null);
     }
 
-    public ObjectPool(Factory<T> factory) {
+    /**
+     * Create empty thread-safe object pool w {@link com.vl.android.utils.ObjectPool.Factory}
+     *
+     * @param factory Factory
+     */
+    public ObjectPool(Factory factory) {
         mFactory = factory;
         mPool = new SparseArray<>(POOL_INITIAL_CAPACITY);
         mInuse = new SlowObjectMap(POOL_INITIAL_CAPACITY);
     }
 
-    public String debug() {
-        return "pool: size=" + mPool.size() + "\n" +
-                "inuse: size=" + mInuse.size() + ", capacity=" + mInuse.capacity() + "\n" +
-                poolDebug();
-    }
-
-    String poolDebug() {
-        StringBuilder builder = new StringBuilder();
-        int size = mPool.size();
-        for (int i = 0; i < size; i++) {
-            Object[] pool = mPool.valueAt(i);
-            int count = 0;
-            for (Object aPool : pool) {
-                if (aPool != null) count++;
-            }
-            builder.append("pool: ")
-                   .append(i)
-                   .append(", size=")
-                   .append(count)
-                   .append(", capacity=")
-                   .append(pool.length)
-                   .append('\n');
-        }
-        return builder.toString();
-    }
-
+    /**
+     * Acquire object in pool or create new if does not exist
+     *
+     * @param type Type of object set
+     * @return Object from set type
+     */
     @SuppressWarnings("unchecked")
-    public T acquire(int type) {
+    public <T> T acquire(int type) {
         synchronized (mPool) {
             Object[] pool = mPool.get(type);
             if (pool == null) {
@@ -63,17 +55,64 @@ public class ObjectPool<T> {
                     break;
                 }
             }
-            if (object == null) object = create(type);
+            if (object == null && (object = create(type)) == null) {
+                throw new NullPointerException("Create has to return non-null object!");
+            }
             mInuse.put(object, type);
             return (T) object;
         }
     }
 
-    public T acquire() {
+    int size(int type) {
+        int size = 0;
+        Object[] pool = mPool.get(type);
+        if (pool != null) {
+            for (Object object : pool) {
+                if (object != null) size++;
+            }
+        }
+        return size;
+    }
+
+    /**
+     * Removes all objects of set type
+     *
+     * @param type Type of object set
+     */
+    public void clear(int type) {
+        synchronized (mPool) {
+            Object[] pool = mPool.get(type);
+            if (pool != null) clear(pool);
+        }
+    }
+
+    /**
+     * Removes all objects and sets
+     */
+    public void clear() {
+        synchronized (mPool) {
+            int size = mPool.size();
+            for (int i = 0; i < size; i++) {
+                clear(mPool.valueAt(i));
+            }
+        }
+    }
+
+    /**
+     * Acquire object in pool or create new if does not exist
+     *
+     * @return Object from set type
+     */
+    public <T> T acquire() {
         return acquire(DEFAULT_TYPE);
     }
 
-    public void release(T object) {
+    /**
+     * Release object acquired from pool back
+     *
+     * @param object Object to release back to pool
+     */
+    public void release(Object object) {
         synchronized (mPool) {
             int index = mInuse.indexOf(object);
             if (index >= 0) {
@@ -96,12 +135,27 @@ public class ObjectPool<T> {
         }
     }
 
-    protected T create(int type) {
+    /**
+     * Create new object for type set
+     *
+     * @param type Type of object set
+     * @return Non-null object
+     */
+    protected Object create(int type) {
         return mFactory == null ? null : mFactory.create(type);
     }
 
-    public interface Factory<T> {
-        T create(int type);
+    /**
+     * Factory to create objects for pool
+     */
+    public interface Factory {
+        /**
+         * Create new object for type set
+         *
+         * @param type Type of object set
+         * @return Non-null object
+         */
+        Object create(int type);
     }
 
     static class SlowObjectMap {
@@ -153,6 +207,13 @@ public class ObjectPool<T> {
             mKeys[index] = null;
             mSize--;
             return mValues[index];
+        }
+    }
+
+    static void clear(Object[] array) {
+        int size = array.length;
+        for (int i = 0; i < size; i++) {
+            array[i] = null;
         }
     }
 
