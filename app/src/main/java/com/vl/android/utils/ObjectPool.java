@@ -1,6 +1,6 @@
 package com.vl.android.utils;
 
-import android.util.SparseArray;
+import java.util.HashMap;
 
 /**
  * Object Pool is thread-safe pattern to simplify access and reuse common objects. Particular object
@@ -9,10 +9,13 @@ import android.util.SparseArray;
 public class ObjectPool {
 
     static final int POOL_INITIAL_CAPACITY = 4;
-    static final int DEFAULT_TYPE = 0;
 
-    final SparseArray<Object[]> mPool;
-    SlowObjectMap mInuse;
+    static final class DefaultClass {}
+
+    static final Class<?> DEFAULT_TYPE = DefaultClass.class;
+
+    final HashMap<Class<?>, Object[]> mPool;
+    Object[] mInuse;
     Factory mFactory;
 
     /**
@@ -29,8 +32,8 @@ public class ObjectPool {
      */
     public ObjectPool(Factory factory) {
         mFactory = factory;
-        mPool = new SparseArray<>(POOL_INITIAL_CAPACITY);
-        mInuse = new SlowObjectMap(POOL_INITIAL_CAPACITY);
+        mPool = new HashMap<>(POOL_INITIAL_CAPACITY);
+        mInuse = new Object[POOL_INITIAL_CAPACITY];
     }
 
     /**
@@ -40,7 +43,7 @@ public class ObjectPool {
      * @return Object from set type
      */
     @SuppressWarnings("unchecked")
-    public <T> T acquire(int type) {
+    public <T> T acquire(Class<T> type) {
         synchronized (mPool) {
             Object[] pool = mPool.get(type);
             if (pool == null) {
@@ -58,12 +61,30 @@ public class ObjectPool {
             if (object == null && (object = create(type)) == null) {
                 throw new NullPointerException("Create has to return non-null object!");
             }
-            mInuse.put(object, type);
-            return (T) object;
+            size = mInuse.length;
+            for (int i = 0; i < size; i++) {
+                if (mInuse[i] == null) {
+                    return (T) (mInuse[i] = object);
+                }
+            }
+            mInuse = grow(mInuse, idealObjectArraySize(size * 2));
+            return (T) (mInuse[size] = object);
         }
     }
 
-    int size(int type) {
+    int inuse() {
+        int size = 0;
+        for (Object object : mInuse) {
+            if (object != null) size++;
+        }
+        return size;
+    }
+
+    int sizeDefault() {
+        return size(DEFAULT_TYPE);
+    }
+
+    int size(Class<?> type) {
         int size = 0;
         Object[] pool = mPool.get(type);
         if (pool != null) {
@@ -79,7 +100,7 @@ public class ObjectPool {
      *
      * @param type Type of object set
      */
-    public void clear(int type) {
+    public void clear(Class<?> type) {
         synchronized (mPool) {
             Object[] pool = mPool.get(type);
             if (pool != null) clear(pool);
@@ -91,9 +112,8 @@ public class ObjectPool {
      */
     public void clear() {
         synchronized (mPool) {
-            int size = mPool.size();
-            for (int i = 0; i < size; i++) {
-                clear(mPool.valueAt(i));
+            for (Object[] pool : mPool.values()) {
+                if (pool != null) clear(pool);
             }
         }
     }
@@ -103,8 +123,9 @@ public class ObjectPool {
      *
      * @return Object from set type
      */
+    @SuppressWarnings("unchecked")
     public <T> T acquire() {
-        return acquire(DEFAULT_TYPE);
+        return (T) acquire(DEFAULT_TYPE);
     }
 
     /**
@@ -114,13 +135,12 @@ public class ObjectPool {
      */
     public void release(Object object) {
         synchronized (mPool) {
-            int index = mInuse.indexOf(object);
-            if (index >= 0) {
-                int type = mInuse.removeAt(index);
+            int index = indexOf(mInuse, object);
+            if (object != null && index >= 0) {
+                mInuse[index] = null;
+                Class<?> type = object.getClass();
+                if (!mPool.containsKey(type)) type = DEFAULT_TYPE;
                 Object[] pool = mPool.get(type);
-                if (pool == null) {
-                    mPool.put(type, pool = new Object[POOL_INITIAL_CAPACITY]);
-                }
                 int size = pool.length;
                 for (int i = 0; i < size; i++) {
                     if (pool[i] == null) {
@@ -141,7 +161,7 @@ public class ObjectPool {
      * @param type Type of object set
      * @return Non-null object
      */
-    protected Object create(int type) {
+    protected Object create(Class<?> type) {
         return mFactory == null ? null : mFactory.create(type);
     }
 
@@ -155,59 +175,15 @@ public class ObjectPool {
          * @param type Type of object set
          * @return Non-null object
          */
-        Object create(int type);
+        Object create(Class<?> type);
     }
 
-    static class SlowObjectMap {
-
-        Object[] mKeys;
-        int[] mValues;
-        int mSize;
-
-        public SlowObjectMap(int initialSize) {
-            mKeys = new Object[initialSize];
-            mValues = new int[mKeys.length];
+    static int indexOf(Object[] array, Object object) {
+        int size = array.length;
+        for (int i = 0; i < size; i++) {
+            if (array[i] == object) return i;
         }
-
-        public int size() {
-            return mSize;
-        }
-
-        public int capacity() {
-            return mKeys.length;
-        }
-
-        public void put(Object key, int value) {
-            if (mKeys.length == mSize) {
-                int size = idealObjectArraySize(mKeys.length * 2);
-                mKeys = grow(mKeys, size);
-                mValues = grow(mValues, size);
-            }
-            int size = mKeys.length;
-            for (int i = 0; i < size; i++) {
-                if (mKeys[i] == null) {
-                    mKeys[i] = key;
-                    mValues[i] = value;
-                    mSize++;
-                    return;
-                }
-            }
-            throw new IllegalStateException("Map is corrupted");
-        }
-
-        public int indexOf(Object key) {
-            int size = mKeys.length;
-            for (int i = 0; i < size; i++) {
-                if (mKeys[i] == key) return i;
-            }
-            return -1;
-        }
-
-        public int removeAt(int index) {
-            mKeys[index] = null;
-            mSize--;
-            return mValues[index];
-        }
+        return -1;
     }
 
     static void clear(Object[] array) {
@@ -219,12 +195,6 @@ public class ObjectPool {
 
     static Object[] grow(Object[] array, int size) {
         Object[] result = new Object[size];
-        System.arraycopy(array, 0, result, 0, array.length);
-        return result;
-    }
-
-    static int[] grow(int[] array, int size) {
-        int[] result = new int[size];
         System.arraycopy(array, 0, result, 0, array.length);
         return result;
     }
