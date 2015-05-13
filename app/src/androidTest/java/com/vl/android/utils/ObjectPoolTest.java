@@ -7,6 +7,13 @@ public class ObjectPoolTest extends AndroidTestCase {
     public void testAllocation() {
         ObjectPool pool = new ObjectPool(mFactory);
 
+//        ObjectPool pool = new ObjectPool() {
+//            @Override
+//            protected Object create(Class<?> type) {
+//                // return type.newInstance();
+//            }
+//        };
+
         Object[][] objects = new Object[3][1000];
         for (int i = 0; i < 1000; i++) {
             objects[0][i] = pool.acquire();
