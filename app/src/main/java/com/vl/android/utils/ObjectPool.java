@@ -1,6 +1,6 @@
 package com.vl.android.utils;
 
-import java.util.HashMap;
+import android.support.v4.util.SimpleArrayMap;
 
 /**
  * Object Pool is thread-safe pattern to simplify access and reuse common objects. Particular object
@@ -14,7 +14,7 @@ public class ObjectPool {
 
     static final Class<?> DEFAULT_TYPE = DefaultClass.class;
 
-    final HashMap<Class<?>, Object[]> mPool;
+    final SimpleArrayMap<Class<?>, Object[]> mPool;
     Object[] mInuse;
     Factory mFactory;
 
@@ -32,7 +32,7 @@ public class ObjectPool {
      */
     public ObjectPool(Factory factory) {
         mFactory = factory;
-        mPool = new HashMap<>(POOL_INITIAL_CAPACITY);
+        mPool = new SimpleArrayMap<>(POOL_INITIAL_CAPACITY);
         mInuse = new Object[POOL_INITIAL_CAPACITY];
     }
 
@@ -112,7 +112,9 @@ public class ObjectPool {
      */
     public void clear() {
         synchronized (mPool) {
-            for (Object[] pool : mPool.values()) {
+            int size = mPool.size();
+            for (int i = 0; i < size; i++) {
+                Object[] pool = mPool.valueAt(i);
                 if (pool != null) clear(pool);
             }
         }
